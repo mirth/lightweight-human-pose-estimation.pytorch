@@ -30,6 +30,15 @@ class ImageReader(object):
         self.idx = self.idx + 1
         return img
 
+def gstreamer_pipeline (capture_width=1280, capture_height=720, display_width=1280, display_height=720, framerate=60, flip_method=0) :   
+    return ('nvarguscamerasrc ! ' 
+    'video/x-raw(memory:NVMM), '
+    'width=(int)%d, height=(int)%d, '
+    'format=(string)NV12, framerate=(fraction)%d/1 ! '
+    'nvvidconv flip-method=%d ! '
+    'video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! '
+    'videoconvert ! '
+    'video/x-raw, format=(string)BGR ! appsink'  % (capture_width,capture_height,framerate,flip_method,display_width,display_height))
 
 class VideoReader(object):
     def __init__(self, file_name):
@@ -40,7 +49,7 @@ class VideoReader(object):
             pass
 
     def __iter__(self):
-        self.cap = cv2.VideoCapture(self.file_name)
+        self.cap = cv2.VideoCapture(gstreamer_pipeline(flip_method=2, capture_width=320, capture_height=180, display_width=320, display_height=180, framerate=10), cv2.CAP_GSTREAMER)
         if not self.cap.isOpened():
             raise IOError('Video {} cannot be opened'.format(self.file_name))
         return self
@@ -81,17 +90,19 @@ def infer_fast(net, img, net_input_height_size, stride, upsample_ratio, cpu,
 
 def run_demo(net, image_provider, height_size, cpu, track_ids):
     net = net.eval()
-    if not cpu:
-        net = net.cuda()
+    #if not cpu:
+    net = net.cuda()
 
     stride = 8
     upsample_ratio = 4
     num_keypoints = Pose.num_kpts
     previous_poses = []
     for img in tqdm.tqdm(image_provider):
+        #cv2.imshow('Lightweight Human Pose Estimation Python Demo', img)
+        #continue
         orig_img = img.copy()
         heatmaps, pafs, scale, pad = infer_fast(net, img, height_size, stride, upsample_ratio, cpu)
-
+        continue
         total_keypoints_num = 0
         all_keypoints_by_type = []
         for kpt_idx in range(num_keypoints):  # 19th for bg
