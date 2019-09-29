@@ -46,10 +46,13 @@ class VideoReader(object):
         try:  # OpenCV needs int to read from webcam
             self.file_name = int(file_name)
         except ValueError:
-            pass
+            pass																
 
     def __iter__(self):
-        self.cap = cv2.VideoCapture(gstreamer_pipeline(flip_method=2, capture_width=320, capture_height=180, display_width=320, display_height=180, framerate=10), cv2.CAP_GSTREAMER)
+        width = 320
+        height = 180
+        framerate = 20
+        self.cap = cv2.VideoCapture(gstreamer_pipeline(flip_method=2, capture_width=width, capture_height=width, display_width=width, display_height=width, framerate=framerate), cv2.CAP_GSTREAMER)
         if not self.cap.isOpened():
             raise IOError('Video {} cannot be opened'.format(self.file_name))
         return self
@@ -67,21 +70,26 @@ def infer_fast(net, img, net_input_height_size, stride, upsample_ratio, cpu,
     scale = net_input_height_size / height
 
     scaled_img = cv2.resize(img, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    #scaled_img = img
     scaled_img = normalize(scaled_img, img_mean, img_scale)
     min_dims = [net_input_height_size, max(scaled_img.shape[1], net_input_height_size)]
     padded_img, pad = pad_width(scaled_img, stride, pad_value, min_dims)
-
+    #print(padded_img.shape)
     tensor_img = torch.from_numpy(padded_img).permute(2, 0, 1).unsqueeze(0).float()
-    if not cpu:
-        tensor_img = tensor_img.cuda()
+    #if not cpu:
+    tensor_img = tensor_img.cuda()
 
     stages_output = net(tensor_img)
+    #print(stages_output[-1].cpu().data.numpy().shape)
+    #stages_output = torch.zeros((1, 16, 2), dtype=torch.float32)#np.array([x for x in range(16)]) 
 
     stage2_heatmaps = stages_output[-2]
+    stage2_heatmaps = torch.zeros((1, 19, 23, 23), dtype=torch.float32)
     heatmaps = np.transpose(stage2_heatmaps.squeeze().cpu().data.numpy(), (1, 2, 0))
     heatmaps = cv2.resize(heatmaps, (0, 0), fx=upsample_ratio, fy=upsample_ratio, interpolation=cv2.INTER_CUBIC)
 
     stage2_pafs = stages_output[-1]
+    #stage2_pafs = torch.zeros((1, 38, 23, 23), dtype=torch.float32)
     pafs = np.transpose(stage2_pafs.squeeze().cpu().data.numpy(), (1, 2, 0))
     pafs = cv2.resize(pafs, (0, 0), fx=upsample_ratio, fy=upsample_ratio, interpolation=cv2.INTER_CUBIC)
 
@@ -94,7 +102,7 @@ def run_demo(net, image_provider, height_size, cpu, track_ids):
     net = net.cuda()
 
     stride = 8
-    upsample_ratio = 4
+    upsample_ratio = 1
     num_keypoints = Pose.num_kpts
     previous_poses = []
     for img in tqdm.tqdm(image_provider):
@@ -102,7 +110,7 @@ def run_demo(net, image_provider, height_size, cpu, track_ids):
         #continue
         orig_img = img.copy()
         heatmaps, pafs, scale, pad = infer_fast(net, img, height_size, stride, upsample_ratio, cpu)
-        continue
+        #continue
         total_keypoints_num = 0
         all_keypoints_by_type = []
         for kpt_idx in range(num_keypoints):  # 19th for bg
