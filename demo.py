@@ -10,6 +10,7 @@ from modules.load_state import load_state
 from modules.pose import Pose, propagate_ids
 from val import normalize, pad_width
 
+import tqdm
 
 class ImageReader(object):
     def __init__(self, file_names):
@@ -87,7 +88,7 @@ def run_demo(net, image_provider, height_size, cpu, track_ids):
     upsample_ratio = 4
     num_keypoints = Pose.num_kpts
     previous_poses = []
-    for img in image_provider:
+    for img in tqdm.tqdm(image_provider):
         orig_img = img.copy()
         heatmaps, pafs, scale, pad = infer_fast(net, img, height_size, stride, upsample_ratio, cpu)
 
