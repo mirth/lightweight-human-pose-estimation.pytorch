@@ -30,8 +30,8 @@ class ImageReader(object):
         self.idx = self.idx + 1
         return img
 
-def gstreamer_pipeline (capture_width=1280, capture_height=720, display_width=1280, display_height=720, framerate=60, flip_method=0) :
-    return ('nvarguscamerasrc ! '
+def gstreamer_pipeline (capture_width=1280, capture_height=720, display_width=1280, display_height=720, framerate=60, flip_method=0) :   
+    return ('nvarguscamerasrc ! ' 
     'video/x-raw(memory:NVMM), '
     'width=(int)%d, height=(int)%d, '
     'format=(string)NV12, framerate=(fraction)%d/1 ! '
@@ -41,28 +41,10 @@ def gstreamer_pipeline (capture_width=1280, capture_height=720, display_width=12
     'video/x-raw, format=(string)BGR ! appsink'  % (capture_width,capture_height,framerate,flip_method,display_width,display_height))
 
 class VideoReader(object):
-    def __init__(self, file_name, cpu):
-        self.file_name = file_name
-        self.cpu = cpu
-        try:  # OpenCV needs int to read from webcam
-            self.file_name = int(file_name)
-        except ValueError:
-            pass
+    def __init__(self, cap):
+        self.cap = cap
 
     def __iter__(self):
-        width = 320
-        height = 180
-        framerate = 30
-
-        if self.cpu:
-            self.cap = cv2.VideoCapture(self.file_name)
-        else:
-            self.cap = cv2.VideoCapture(gstreamer_pipeline(flip_method=2, capture_width=width, capture_height=width, display_width=width, display_height=width, framerate=framerate), cv2.CAP_GSTREAMER)
-
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        self.cap.set(cv2.CAP_PROP_FRAME_COUNT, framerate)
-
         if not self.cap.isOpened():
             raise IOError('Video {} cannot be opened'.format(self.file_name))
         return self
@@ -76,9 +58,12 @@ class VideoReader(object):
 
 def infer_fast(net, img, net_input_height_size, stride, upsample_ratio, cpu,
                pad_value=(0, 0, 0), img_mean=(128, 128, 128), img_scale=1/256, use_net=True):
+    tensor_img = torch.zeros((1, 3, 128 // 2, 232 // 2)).cuda()
+    stages_output = net(tensor_img)
+    return
     height, width, _ = img.shape
     scale = net_input_height_size / height
-
+    
     scaled_img = cv2.resize(img, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
     #scaled_img = img
     scaled_img = normalize(scaled_img, img_mean, img_scale)
@@ -88,10 +73,11 @@ def infer_fast(net, img, net_input_height_size, stride, upsample_ratio, cpu,
 
     if not cpu:
         tensor_img = tensor_img.cuda()
-
+    print(tensor_img.shape)
     if use_net:
         stages_output = net(tensor_img)
-
+    if 1:
+        return
     if use_net:
         stage2_heatmaps = stages_output[-2]
     else:
@@ -120,58 +106,30 @@ def run_demo(net, image_provider, height_size, cpu, track_ids):
     upsample_ratio = 4
     num_keypoints = Pose.num_kpts
     previous_poses = []
-    for img in tqdm.tqdm(image_provider):
-        # cv2.imshow('Lightweight Human Pose Estimation Python Demo', img)
-        # continue
-        orig_img = img.copy()
-        heatmaps, pafs, scale, pad = infer_fast(
+    #window_handle = cv2.namedWindow('CSI Camera', cv2.WINDOW_AUTOSIZE)
+    for img in tqdm.tqdm(range(0, 1000000)):#tqdm.tqdm(image_provider):
+        #print(img.shape)
+        #cv2.imshow('Lightweight Human Pose Estimation Python Demo', img)
+        #keyCode = cv2.waitKey(30) & 0xff
+        # Stop the program on the ESC key
+        #if keyCode == 27:
+        #    break
+        #continue
+        #orig_img = img.copy()
+        #heatmaps, pafs, scale, pad =
+        infer_fast(
             net,
             img,
             height_size,
             stride,
             upsample_ratio,
             cpu,
-            use_net=False,
+            use_net=True,
         )
-        #continue
-        total_keypoints_num = 0
-        all_keypoints_by_type = []
-        for kpt_idx in range(num_keypoints):  # 19th for bg
-            total_keypoints_num += extract_keypoints(heatmaps[:, :, kpt_idx], all_keypoints_by_type, total_keypoints_num)
-
-        pose_entries, all_keypoints = group_keypoints(all_keypoints_by_type, pafs, demo=True)
-        for kpt_id in range(all_keypoints.shape[0]):
-            all_keypoints[kpt_id, 0] = (all_keypoints[kpt_id, 0] * stride / upsample_ratio - pad[1]) / scale
-            all_keypoints[kpt_id, 1] = (all_keypoints[kpt_id, 1] * stride / upsample_ratio - pad[0]) / scale
-        current_poses = []
-        for n in range(len(pose_entries)):
-            if len(pose_entries[n]) == 0:
-                continue
-            pose_keypoints = np.ones((num_keypoints, 2), dtype=np.int32) * -1
-            for kpt_id in range(num_keypoints):
-                if pose_entries[n][kpt_id] != -1.0:  # keypoint was found
-                    pose_keypoints[kpt_id, 0] = int(all_keypoints[int(pose_entries[n][kpt_id]), 0])
-                    pose_keypoints[kpt_id, 1] = int(all_keypoints[int(pose_entries[n][kpt_id]), 1])
-            pose = Pose(pose_keypoints, pose_entries[n][18])
-            current_poses.append(pose)
-            pose.draw(img)
-
-        img = cv2.addWeighted(orig_img, 0.6, img, 0.4, 0)
-        if track_ids == True:
-            propagate_ids(previous_poses, current_poses)
-            previous_poses = current_poses
-            for pose in current_poses:
-                cv2.rectangle(img, (pose.bbox[0], pose.bbox[1]),
-                              (pose.bbox[0] + pose.bbox[2], pose.bbox[1] + pose.bbox[3]), (0, 255, 0))
-                cv2.putText(img, 'id: {}'.format(pose.id), (pose.bbox[0], pose.bbox[1] - 16),
-                            cv2.FONT_HERSHEY_COMPLEX, 0.5, (0, 0, 255))
-        cv2.imshow('Lightweight Human Pose Estimation Python Demo', img)
-        key = cv2.waitKey(33)
-        if key == 27:  # esc
-            return
+        continue
 
 
-if __name__ == '__main__':
+def get_args(raw):
     parser = argparse.ArgumentParser(
         description='''Lightweight human pose estimation python demo.
                        This is just for quick results preview.
@@ -182,17 +140,25 @@ if __name__ == '__main__':
     parser.add_argument('--images', nargs='+', default='', help='path to input image(s)')
     parser.add_argument('--cpu', action='store_true', help='run network inference on cpu')
     parser.add_argument('--track-ids', default=True, help='track poses ids')
-    args = parser.parse_args()
+    if raw is None:
+         return parser.parse_args()
+
+    return parser.parse_args(raw)
+
+if __name__ == '__main__':
+    args = get_args(None)
 
     if args.video == '' and args.images == '':
         raise ValueError('Either --video or --image has to be provided')
 
     net = PoseEstimationWithMobileNet()
-    checkpoint = torch.load(args.checkpoint_path, map_location='cpu')
+    checkpoint = torch.load(args.checkpoint_path, map_location='cuda')
     load_state(net, checkpoint)
 
     frame_provider = ImageReader(args.images)
     if args.video != '':
-        frame_provider = VideoReader(args.video, args.cpu)
+        #cap = cv2.VideoCapture(gstreamer_pipeline(flip_method=2), cv2.CAP_GSTREAMER)
+        frame_provider = None#VideoReader(cap)
 
     run_demo(net, frame_provider, args.height_size, args.cpu, args.track_ids)
+
