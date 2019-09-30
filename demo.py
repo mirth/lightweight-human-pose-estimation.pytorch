@@ -50,13 +50,19 @@ class VideoReader(object):
             pass
 
     def __iter__(self):
+        width = 320
+        height = 180
+        framerate = 30
+
         if self.cpu:
             self.cap = cv2.VideoCapture(self.file_name)
         else:
-            width = 320
-            height = 180
-            framerate = 20
             self.cap = cv2.VideoCapture(gstreamer_pipeline(flip_method=2, capture_width=width, capture_height=width, display_width=width, display_height=width, framerate=framerate), cv2.CAP_GSTREAMER)
+
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        self.cap.set(cv2.CAP_PROP_FRAME_COUNT, framerate)
+
         if not self.cap.isOpened():
             raise IOError('Video {} cannot be opened'.format(self.file_name))
         return self
@@ -125,7 +131,7 @@ def run_demo(net, image_provider, height_size, cpu, track_ids):
             stride,
             upsample_ratio,
             cpu,
-            use_net=True,
+            use_net=False,
         )
         #continue
         total_keypoints_num = 0
