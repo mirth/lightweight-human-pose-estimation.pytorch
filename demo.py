@@ -30,8 +30,8 @@ class ImageReader(object):
         self.idx = self.idx + 1
         return img
 
-def gstreamer_pipeline (capture_width=1280, capture_height=720, display_width=1280, display_height=720, framerate=60, flip_method=0) :   
-    return ('nvarguscamerasrc ! ' 
+def gstreamer_pipeline (capture_width=1280, capture_height=720, display_width=1280, display_height=720, framerate=60, flip_method=0) :
+    return ('nvarguscamerasrc ! '
     'video/x-raw(memory:NVMM), '
     'width=(int)%d, height=(int)%d, '
     'format=(string)NV12, framerate=(fraction)%d/1 ! '
@@ -41,18 +41,22 @@ def gstreamer_pipeline (capture_width=1280, capture_height=720, display_width=12
     'video/x-raw, format=(string)BGR ! appsink'  % (capture_width,capture_height,framerate,flip_method,display_width,display_height))
 
 class VideoReader(object):
-    def __init__(self, file_name):
+    def __init__(self, file_name, cpu):
         self.file_name = file_name
+        self.cpu = cpu
         try:  # OpenCV needs int to read from webcam
             self.file_name = int(file_name)
         except ValueError:
-            pass																
+            pass
 
     def __iter__(self):
-        width = 320
-        height = 180
-        framerate = 20
-        self.cap = cv2.VideoCapture(gstreamer_pipeline(flip_method=2, capture_width=width, capture_height=width, display_width=width, display_height=width, framerate=framerate), cv2.CAP_GSTREAMER)
+        if self.cpu:
+            self.cap = cv2.VideoCapture(self.file_name)
+        else:
+            width = 320
+            height = 180
+            framerate = 20
+            self.cap = cv2.VideoCapture(gstreamer_pipeline(flip_method=2, capture_width=width, capture_height=width, display_width=width, display_height=width, framerate=framerate), cv2.CAP_GSTREAMER)
         if not self.cap.isOpened():
             raise IOError('Video {} cannot be opened'.format(self.file_name))
         return self
@@ -65,7 +69,7 @@ class VideoReader(object):
 
 
 def infer_fast(net, img, net_input_height_size, stride, upsample_ratio, cpu,
-               pad_value=(0, 0, 0), img_mean=(128, 128, 128), img_scale=1/256):
+               pad_value=(0, 0, 0), img_mean=(128, 128, 128), img_scale=1/256, use_net=True):
     height, width, _ = img.shape
     scale = net_input_height_size / height
 
@@ -74,22 +78,27 @@ def infer_fast(net, img, net_input_height_size, stride, upsample_ratio, cpu,
     scaled_img = normalize(scaled_img, img_mean, img_scale)
     min_dims = [net_input_height_size, max(scaled_img.shape[1], net_input_height_size)]
     padded_img, pad = pad_width(scaled_img, stride, pad_value, min_dims)
-    #print(padded_img.shape)
     tensor_img = torch.from_numpy(padded_img).permute(2, 0, 1).unsqueeze(0).float()
-    #if not cpu:
-    tensor_img = tensor_img.cuda()
 
-    stages_output = net(tensor_img)
-    #print(stages_output[-1].cpu().data.numpy().shape)
-    #stages_output = torch.zeros((1, 16, 2), dtype=torch.float32)#np.array([x for x in range(16)]) 
+    if not cpu:
+        tensor_img = tensor_img.cuda()
 
-    stage2_heatmaps = stages_output[-2]
-    stage2_heatmaps = torch.zeros((1, 19, 23, 23), dtype=torch.float32)
+    if use_net:
+        stages_output = net(tensor_img)
+
+    if use_net:
+        stage2_heatmaps = stages_output[-2]
+    else:
+        stage2_heatmaps = torch.zeros((1, 19, 23, 23), dtype=torch.float32)
+
     heatmaps = np.transpose(stage2_heatmaps.squeeze().cpu().data.numpy(), (1, 2, 0))
     heatmaps = cv2.resize(heatmaps, (0, 0), fx=upsample_ratio, fy=upsample_ratio, interpolation=cv2.INTER_CUBIC)
 
-    stage2_pafs = stages_output[-1]
-    #stage2_pafs = torch.zeros((1, 38, 23, 23), dtype=torch.float32)
+    if use_net:
+        stage2_pafs = stages_output[-1]
+    else:
+        stage2_pafs = torch.zeros((1, 38, 23, 23), dtype=torch.float32)
+
     pafs = np.transpose(stage2_pafs.squeeze().cpu().data.numpy(), (1, 2, 0))
     pafs = cv2.resize(pafs, (0, 0), fx=upsample_ratio, fy=upsample_ratio, interpolation=cv2.INTER_CUBIC)
 
@@ -98,18 +107,26 @@ def infer_fast(net, img, net_input_height_size, stride, upsample_ratio, cpu,
 
 def run_demo(net, image_provider, height_size, cpu, track_ids):
     net = net.eval()
-    #if not cpu:
-    net = net.cuda()
+    if not cpu:
+        net = net.cuda()
 
     stride = 8
-    upsample_ratio = 1
+    upsample_ratio = 4
     num_keypoints = Pose.num_kpts
     previous_poses = []
     for img in tqdm.tqdm(image_provider):
-        #cv2.imshow('Lightweight Human Pose Estimation Python Demo', img)
-        #continue
+        # cv2.imshow('Lightweight Human Pose Estimation Python Demo', img)
+        # continue
         orig_img = img.copy()
-        heatmaps, pafs, scale, pad = infer_fast(net, img, height_size, stride, upsample_ratio, cpu)
+        heatmaps, pafs, scale, pad = infer_fast(
+            net,
+            img,
+            height_size,
+            stride,
+            upsample_ratio,
+            cpu,
+            use_net=True,
+        )
         #continue
         total_keypoints_num = 0
         all_keypoints_by_type = []
@@ -170,6 +187,6 @@ if __name__ == '__main__':
 
     frame_provider = ImageReader(args.images)
     if args.video != '':
-        frame_provider = VideoReader(args.video)
+        frame_provider = VideoReader(args.video, args.cpu)
 
     run_demo(net, frame_provider, args.height_size, args.cpu, args.track_ids)
